@@ -2,7 +2,7 @@
 
 An agent-based RAG system for analyzing student answers, classifying them as **Standard**, **Latent**, or **Off-topic**, and refining a
 **Thematic Codebook** with professor oversight.\
-This combines **retrieval-augmented generation**, **rubric-based classification**, and **professor-in-the-loop feedback** for adaptive,
+This combines **retrieval-augmented generation (RAG)**, **rubric-based classification**, and **professor-in-the-loop feedback** for adaptive,
 explainable evaluation.
 
 ------------------------------------------------------------------------
@@ -13,6 +13,7 @@ explainable evaluation.
 -   **Rubric & Criteria-driven classification** (Standard / Latent / Off-topic)
 -   **Professor-in-the-loop approvals** for new themes/keywords
 -   **PostgreSQL + pgvector** for semantic retrieval
+-   **Sentence-Transformers** (`all-MiniLM-L6-v2`) for efficient, local embeddings
 -   **Batch processing** of student submissions with retries & confidence thresholds
 -   **Evaluation dashboard** for precision/recall and drift detection
 
@@ -37,6 +38,7 @@ explainable evaluation.
     ├── tests/                  # Unit + integration tests
     ├── planning.md             # Project plan
     └── README.md               # Project documentation
+
 
 ------------------------------------------------------------------------
 
@@ -65,7 +67,7 @@ psql -d agentic_rag -f sql/schema.sql
 ```
 
 > ⚠️ Adjust embedding dimensions in `schema.sql` based on your embedding
-> model (e.g., 768 or 1536).
+> model (e.g., 384, 768 or 1536).
 
 ### 3. Configure `.env`
 
@@ -141,14 +143,4 @@ pytest --cov=agent --cov=api --cov-report=html
 -   **Low performance?** Check embedding dimensions in schema + index setup.
 
 ------------------------------------------------------------------------
-
-## 📌 Roadmap
-
--   [ ] Web UI for professor approvals
--   [ ] Real-time streaming feedback via FastAPI SSE
--   [ ] Dashboard for evaluation metrics
--   [ ] Parallel orchestrator scaling for thousands of answers
-
-------------------------------------------------------------------------
-
 Built with ❤️ using **FastAPI**, **PostgreSQL + pgvector**, and **multi-agent orchestration**.

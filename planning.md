@@ -24,7 +24,7 @@ refine a **Thematic Codebook** with professor oversight.\
 
 ------------------------------------------------------------------------
 
-## 3) System Architecture (at a glance)
+## 3) System Architecture
 
 -   **API Layer:** FastAPI (SSE streaming for long tasks).
 -   **Agent Layer:** Orchestrator + Sub-agents (Extractor, Matcher/Classifier, Aggregator, Summary Reporter).
@@ -34,7 +34,7 @@ refine a **Thematic Codebook** with professor oversight.\
 
 ------------------------------------------------------------------------
 
-## 4) Agents & Responsibilities (mapped to your flow)
+## 4) Agents & Responsibilities
 
 1.  **Master/Orchestrator Agent**
     -   Splits input into batches (e.g., 10 answers) and dispatches.
@@ -42,8 +42,7 @@ refine a **Thematic Codebook** with professor oversight.\
     -   Writes run metadata (batch id, timings, outcomes).
 2.  **Extracting Agent**
     -   Detects **themes/sentiment**, matches to **Codebook keywords**.
-    -   Emits: matched_keywords, detected_themes, salient evidence
-        spans.
+    -   Emits: matched_keywords, detected_themes, salient evidence spans.
 3.  **Matching / Classifier Agent**
     -   Applies rubric + criteria to classify **Standard / Latent / Off-topic**.
     -   Produces: label, evidence, rubric alignment score, confidence.
@@ -51,7 +50,7 @@ refine a **Thematic Codebook** with professor oversight.\
     -   Generates **per-answer summary** (classification + reasoning + theme note).
     -   Clears short-term memory after each batch; persists outputs.
 5.  **Aggregator Agent**
-    -   Detects **novel patterns** across answers/batches.
+    -   Detects **novel patterns** if the answer did not meet the confidence threshold 3 times in a row.
     -   Proposes **codebook updates** (new keywords/aliases, theme candidates) with frequency stats.
 6.  **Professor-in-the-loop**
     -   Approves/edits proposed keywords/themes in a **staging** table.
@@ -62,23 +61,18 @@ refine a **Thematic Codebook** with professor oversight.\
 ## 5) Data Model (PostgreSQL + pgvector)
 
 **Entities (tables)** 
-- `questions` --- 4 canonical questions (id, text, metadata). 
-- `rubrics` --- rubric items (0/50/100), descriptors, exemplars, embedding. 
-- `criteria` --- criteria for **Standard vs Latent** (name, description, guidance). 
-- `topic_keywords` --- professor keyword sets (topic_id, keyword, weight, status: approved/staged, source). 
-- `student_submissions` --- (student_id, question_id, text, meta). 
-- `chunks` --- optional chunking of long answers; store embeddings (`embedding vector`). 
-- `runs` --- batch runs (id, started_at, model, params, operator, notes). 
-- `run_items` --- per-answer processing trace (submission_id, run_id, agent outputs, confidence, elapsed). 
+- `questions` --- 4 questions (id, code, text, metadata). 
+- `rubrics` --- id, question_id, level_pct (0/50/100), descriptors, exemplars, embedding. 
+- `criteria` --- criteria for **Standard vs Latent** (id, name, description, guidance, embedding). 
+- `topic_keywords` --- professor keyword sets (topic_id, keyword, weight, status: approved/staged, source).
 - `classifications` --- final label, rubric alignment score, evidence spans. 
 - `reasoning_summaries` --- concise rationale + theme summary per answer. 
 - `pattern_proposals` --- aggregator's proposed new keywords/themes (freq, examples, status). 
 - `approvals` --- professor decisions (approve/reject/edit with comment and editor id). 
 - `metrics` --- offline eval (precision/recall/F1 by label, drift, approval rate). 
-- `attachments` --- optional storage refs for PDFs/CSV uploads.
 
 > Vectorization: 
-- `rubrics.embedding`, `criteria.embedding`, `topic_keywords.embedding`, `chunks.embedding` using `pgvector`. 
+- `rubrics.embedding`, `criteria.embedding`, `topic_keywords.embedding` using `pgvector`. 
 - Indexes: `ivfflat` on embeddings, plus btree on foreign keys and timestamps.
 
 ------------------------------------------------------------------------
@@ -121,8 +115,7 @@ refine a **Thematic Codebook** with professor oversight.\
 ## 9) API & CLI
 
 -   **FastAPI endpoints**
-    -   `POST /runs` start batch with config (question_ids, size,
-        thresholds).
+    -   `POST /runs` start batch with config (question_ids, size, thresholds).
     -   `GET /runs/{id}/stream` SSE progress (per-answer events).
     -   `GET /reports/{run_id}` consolidated JSON/CSV export.
     -   `POST /proposals/{id}/approve|reject` (professor role).
@@ -165,28 +158,28 @@ refine a **Thematic Codebook** with professor oversight.\
 
 ## 13) Implementation Phases (sequence, no time promises)
 
-**Phase A --- Foundation** 
+**Phase A—Foundation** 
 - Project skeleton (Poetry/venv), env files, logging. 
-- PostgreSQL + pgvector setup; schemas & migrations. 
+- PostgreSQL + pgvector setup; schemas. 
 - Embedding service and DB utilities.
 
 **Phase B --- Ingestion & Data Model** 
 - Importers for questions/rubrics/criteria/keywords and student CSVs. 
 - Embedding + chunking jobs; indexing.
 
-**Phase C --- Agents** 
+**Phase C—Agents** 
 - Orchestrator + Extracting + Classifier + Summary Reporter. 
 - Confidence and retry policy; write traces to DB.
 
-**Phase D --- Aggregator & Professor Loop** 
+**Phase D—Aggregator & Professor Loop** 
 - Pattern mining + proposal staging. 
 - Approval endpoints + simple review UI (could be minimal FastAPI pages).
 
-**Phase E --- API/CLI & Reporting** 
+**Phase E—API/CLI & Reporting** 
 - Batch run endpoints (SSE), exports(CSV/JSON). 
 - Run registry and reproducibility metadata.
 
-**Phase F --- Evaluation & Hardening** 
+**Phase F—Evaluation & Hardening** 
 - Gold set + automated evaluation scripts. 
 - Metrics dashboard; alerts on regressions; security pass.
 
@@ -212,6 +205,4 @@ refine a **Thematic Codebook** with professor oversight.\
     **Run/Debug**:
     -   `uvicorn app.api:app --reload`
     -   environment vars via `.env`
--   DB migrations: `alembic` or `yoyo-migrations` task config.
--   Test configurations for `pytest` (unit + integration).
--   Code style: `ruff` + `black` pre-commit hook.
+

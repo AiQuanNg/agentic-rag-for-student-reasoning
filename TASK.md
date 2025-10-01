@@ -10,22 +10,24 @@ component, following the project plan.
 
 ## Phase 0: Environment & Setup
 
--   [ ] Create project directory structure
--   [ ] Initialize virtual environment (`venv`) and requirements.txt
--   [ ] Create `.env.example` with DB + LLM config variables
--   [ ] Set up `.gitignore` and pre-commit hooks (ruff, black)
+-   [X] Create a project directory structure
+-   [X] Initialize virtual environment (`venv`) and requirements.txt
+-   [X] Create `.env.example` with DB + LLM config variables
+-   [X] Set up `.gitignore` and pre-commit hooks (ruff, black)
 
 ------------------------------------------------------------------------
 
 ## Phase 1: Database & Schema
 
--   [ ] Create PostgreSQL database and enable `pgvector`
--   [ ] Write `schema.sql` with tables: `questions`, `rubrics`,
-    `criteria`, `topic_keywords`, `student_submissions`, `chunks`,
-    `runs`, `run_items`, `classifications`, `reasoning_summaries`,
+-   [X] Create PostgreSQL database and enable `pgvector`
+-   [X] Write `schema.sql` with tables: `questions`, `rubrics`,
+    `criteria`, `topic_keywords`, `classifications`, `reasoning_summaries`,
     `pattern_proposals`, `approvals`, `metrics`
--   [ ] Create migration scripts with Alembic
--   [ ] Implement DB connection utilities (asyncpg/SQLAlchemy)
+-   [X] Import CSVs into all core tables
+-   [X] Test DB connection
+-   [X] Create schema migration for embedding dimension (1536 → 384)
+-   [X] Write embedding generation script using `all-MiniLM-L6-v2`
+-   [ ] Verify embeddings in database
 -   [ ] Add transaction management and retry logic
 
 ------------------------------------------------------------------------
@@ -135,7 +137,15 @@ component, following the project plan.
 
 ## Project Status
 
-🚧 **In Progress**\
-- Planning complete (`planning.md`)\
-- README drafted (`README.md`)\
-- Next step: implement **schema.sql** and ingestion pipeline
+🚧 **In Progress - Phase 1 (Database & Schema)**
+
+### Recently Completed (2025-09-29):
+- ✅ Created `sql/schema.sql` with pgvector support
+- ✅ Created `sql/AlterEmbeddingDimension.sql` migration (1536 → 384 dim)
+- ✅ Implemented `scripts/generate_embeddings.py` using `all-MiniLM-L6-v2`
+- ✅ Updated `requirements.txt` with sentence-transformers
+
+### Next Steps:
+1. Verify embeddings with test queries
+2. Begin **Phase 2: Core Agent Development** (Orchestrator Agent)
+ (Python + OpenAI / sentence-transformers)
