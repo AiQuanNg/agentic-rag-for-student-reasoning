@@ -1,0 +1,13 @@
+﻿id,question_id,level_pct,descriptor,exemplar
+1,1,100,Full understanding,"Answer is 200–300 words, uses clear logic, clearly defines generative AI an explains how it works, and provides evidence from online knowledge community/social media platform (e.g., screenshots of questions/answers)."
+2,1,50,Partial understanding,Answer is provided but either logic is unclear OR evidence from online knowledge community/social media platform is missing.
+3,1,0,No understanding,Answer is missing OR lacks both logic and evidence from online knowledge community/social media platform.
+4,2,100,Full understanding,"Answer is 200–300 words, uses clear logic, explains at least one organizational application of generative AI, and provides evidence from online knowledge community/social media platform."
+5,2,50,Partial understanding,Answer is provided but either logic is unclear OR evidence from online knowledge community/social media platform is missing.
+6,2,0,No understanding,Answer is missing OR lacks both logic and evidence from online knowledge community/social media platform.
+7,3,100,Full understanding,"Answer is 200–300 words, uses clear logic, identifies multiple legal and ethical issues of generative AI in organizations, and provides evidence from online knowledge community/social media platform."
+8,3,50,Partial understanding,Answer is provided but either logic is unclear OR evidence from online knowledge community/social media platform is missing.
+9,3,0,No understanding,Answer is missing OR lacks both logic and evidence from online knowledge community/social media platform.
+10,4,100,Full understanding,"Answer is 200–300 words, uses clear logic, explains key challenges in applying generative AI for strategic benefits, and provides evidence from online knowledge community/social media platform."
+11,4,50,Partial understanding,Answer is provided but either logic is unclear OR evidence from online knowledge community/social media platform is missing.
+12,4,0,No understanding,Answer is missing OR lacks both logic and evidence from online knowledge community/social media platform.
