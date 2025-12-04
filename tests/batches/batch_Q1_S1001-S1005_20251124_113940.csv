@@ -1,0 +1,6 @@
+answer_id,question_id,status,extraction_confidence,topic,matched_keywords_count,detected_themes_count,novel_terms_count,evidence_spans_count,matched_keywords,detected_themes,novel_terms,evidence_spans,error
+3873,1,success,0.0,,0,0,0,0,,,,,
+3874,1,success,0.0,,0,0,0,0,,,,,
+3875,1,success,0.0,,0,0,0,0,,,,,
+3876,1,success,0.85,,8,4,3,4,generative AI|neural networks|AI evolution|AI applications|research progress|AI applications|technical limitations|AI evolution,technical landscape|historical development|current debates|future prospects,Alan Turing|Turing Test|YouTube comment thread,AI has been around since the 1950s|Alan Turing created the Turing Test|Modern AI uses neural networks|AI research continues to advance every year,
+3877,1,success,0.85,,5,3,1,3,chatgpt|dalle|midjourney|stablediffusion|copilot,generative artificial intelligence|business applications|rapid technological expansion,AI industry growth,"ChatGPT is probably the most famous one and everyone uses it|DALL-E, Midjourney, and Stable Diffusion|new tools come out every week",

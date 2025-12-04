@@ -158,7 +158,9 @@ class ExtractorTester:
             result = {
                 'answer_id': answer_id,
                 'question_id': question_id,
+                'answer_text': answer_text,  # Add answer text
                 'status': 'success',
+                'topic': extraction.topic,  # New test field
                 'matched_keywords': extraction.matched_keywords,
                 'detected_themes': extraction.detected_themes,
                 'novel_terms': extraction.novel_terms,
@@ -180,7 +182,9 @@ class ExtractorTester:
             return {
                 'answer_id': answer_id,
                 'question_id': question_id,
+                'answer_text': answer_text,  # Add answer text
                 'status': 'error',
+                'topic': [],  # New test field
                 'matched_keywords': [],
                 'detected_themes': [],
                 'novel_terms': [],
@@ -296,11 +300,13 @@ class ExtractorTester:
         results_table.add_column("ID", style="cyan")
         results_table.add_column("Status", style="magenta")
         results_table.add_column("Confidence", style="yellow")
+        results_table.add_column("Topic", style="bright_magenta")  # New test field
         results_table.add_column("Keywords", style="green")
         results_table.add_column("Themes", style="blue")
         results_table.add_column("Novel Terms", style="red")
         
         for result in self.results:
+            topic_count = len(result['topic'])  # New test field
             keyword_count = len(result['matched_keywords'])
             theme_count = len(result['detected_themes'])
             novel_count = len(result['novel_terms'])
@@ -315,6 +321,7 @@ class ExtractorTester:
                 str(result['answer_id']),
                 result['status'].upper(),
                 confidence_str,
+                str(topic_count),  # New test field
                 str(keyword_count),
                 str(theme_count),
                 str(novel_count)
@@ -333,6 +340,15 @@ class ExtractorTester:
                 f"\n[bold]{status_symbol} Answer {i} (ID: {result['answer_id']})[/bold]"
             )
             console.print(f"  Confidence: {result['extraction_confidence']:.2f}")
+            
+            # Display answer text (truncated)
+            if result['answer_text']:
+                answer_preview = result['answer_text'][:100] + "..." if len(result['answer_text']) > 100 else result['answer_text']
+                console.print(f"  [dim]Answer:[/dim] {answer_preview}")
+            
+            # Display topics
+            if result['topic']:
+                console.print(f"  [bright_magenta]Topics ({len(result['topic'])}):[/bright_magenta] {', '.join(result['topic'])}")
             
             if result['matched_keywords']:
                 console.print(f"  Keywords: {', '.join(result['matched_keywords'][:5])}")
@@ -372,8 +388,11 @@ class ExtractorTester:
                 fieldnames = [
                     'answer_id',
                     'question_id',
+                    'answer_text',  # Add answer text
                     'status',
                     'extraction_confidence',
+                    'topic_count',  # Add topic count
+                    'topic',  # New test field
                     'matched_keywords_count',
                     'detected_themes_count',
                     'novel_terms_count',
@@ -391,8 +410,11 @@ class ExtractorTester:
                     row = {
                         'answer_id': result['answer_id'],
                         'question_id': result['question_id'],
+                        'answer_text': result['answer_text'],  # Add answer text
                         'status': result['status'],
                         'extraction_confidence': result['extraction_confidence'],
+                        'topic_count': len(result['topic']),  # Add topic count
+                        'topic': '|'.join(result['topic']),  # New test field
                         'matched_keywords_count': len(result['matched_keywords']),
                         'detected_themes_count': len(result['detected_themes']),
                         'novel_terms_count': len(result['novel_terms']),

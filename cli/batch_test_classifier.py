@@ -32,7 +32,7 @@ load_dotenv()
 console = Console()
 
 
-async def run_batch(question_id: int, start_student_id: str, batch_size: int) -> str:
+async def run_batch(question_id: int, start_student_id: str, batch_size: int, extractor_csv: str = None) -> str:
     """
     Run a single batch of student classification tests.
     
@@ -40,6 +40,7 @@ async def run_batch(question_id: int, start_student_id: str, batch_size: int) ->
         question_id: Question ID to test
         start_student_id: Starting student ID (e.g., 'S0001')
         batch_size: Number of students in this batch
+        extractor_csv: Optional path to extractor results CSV file
     
     Returns:
         Path to output CSV file if successful, None otherwise
@@ -55,6 +56,10 @@ async def run_batch(question_id: int, start_student_id: str, batch_size: int) ->
         tester = ClassifierTester(db_url=db_url)
         await tester.connect_db()
         
+        # Load extractor results from CSV if provided
+        if extractor_csv:
+            tester.load_extractor_results_from_csv(extractor_csv)
+        
         # Generate list of student IDs for this batch
         start_num = int(start_student_id[1:])  # Extract number from 'S0001'
         student_ids = [f"S{i:04d}" for i in range(start_num, start_num + batch_size)]
@@ -68,7 +73,7 @@ async def run_batch(question_id: int, start_student_id: str, batch_size: int) ->
         # Save results to batch-specific file
         if results:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            output_path = f"tests/batch_results_Q{question_id}_{start_student_id}_{timestamp}.csv"
+            output_path = f"tests/classifer_test_batches/batch_results_Q{question_id}_{start_student_id}_{timestamp}.csv"
             output_path = tester.save_results(output_path)
         else:
             output_path = None
@@ -84,7 +89,7 @@ async def run_batch(question_id: int, start_student_id: str, batch_size: int) ->
         return None
 
 
-async def run_all_batches(question_id: int, total_students: int, batch_size: int, delay_seconds: int = 2):
+async def run_all_batches(question_id: int, total_students: int, batch_size: int, delay_seconds: int = 2, start_student: int = 1, extractor_csv: str = None):
     """
     Run classifier test on multiple batches of students.
     
@@ -93,16 +98,27 @@ async def run_all_batches(question_id: int, total_students: int, batch_size: int
         total_students: Total number of students to test
         batch_size: Number of students per batch
         delay_seconds: Delay between batches to avoid rate limits
+        start_student: Starting student number (default: 1 for S0001)
+        extractor_csv: Optional path to extractor results CSV file
     """
     # Calculate number of batches
     num_batches = (total_students + batch_size - 1) // batch_size
+    end_student = start_student + total_students - 1
     
     console.print(f"\n[bold cyan]Starting Batch Classification Test[/bold cyan]")
     console.print(f"Question ID: {question_id}")
-    console.print(f"Total Students: {total_students} (S0001 - S{total_students:04d})")
+    console.print(f"Total Students: {total_students} (S{start_student:04d} - S{end_student:04d})")
     console.print(f"Batch Size: {batch_size}")
     console.print(f"Number of Batches: {num_batches}")
-    console.print(f"Delay Between Batches: {delay_seconds}s\n")
+    console.print(f"Delay Between Batches: {delay_seconds}s")
+    
+    if extractor_csv:
+        console.print(f"[yellow]Mode: Using cached extractor results from CSV[/yellow]")
+        console.print(f"[yellow]Extractor CSV: {extractor_csv}[/yellow]")
+    else:
+        console.print(f"[yellow]Mode: Running full pipeline (Extractor → Classifier)[/yellow]")
+    
+    console.print("")
     
     successful_batches = 0
     failed_batches = 0
@@ -122,12 +138,12 @@ async def run_all_batches(question_id: int, total_students: int, batch_size: int
         )
         
         for batch_num in range(num_batches):
-            start_student_num = batch_num * batch_size + 1
+            start_student_num = start_student + batch_num * batch_size
             start_student_id = f"S{start_student_num:04d}"
             current_batch_size = min(batch_size, total_students - batch_num * batch_size)
             
-            # Run batch
-            batch_file = await run_batch(question_id, start_student_id, current_batch_size)
+            # Run batch (with optional extractor CSV)
+            batch_file = await run_batch(question_id, start_student_id, current_batch_size, extractor_csv)
             
             if batch_file:
                 successful_batches += 1
@@ -152,24 +168,26 @@ async def run_all_batches(question_id: int, total_students: int, batch_size: int
     
     # Merge all batch results into a single file
     if batch_result_files:
-        merged_file = merge_batch_results(question_id, batch_result_files, total_students)
+        end_student = start_student + total_students - 1
+        merged_file = merge_batch_results(question_id, batch_result_files, start_student, end_student)
         if merged_file:
             console.print(f"[bold green]✓ All results merged into: {merged_file}[/bold green]")
     else:
         console.print("[yellow]No batch results to merge[/yellow]")
     
     # Show where individual batch results are saved
-    console.print(f"[dim]Individual batch results: tests/batch_results_Q{question_id}_S*.csv[/dim]")
+    console.print(f"[dim]Individual batch results: tests/classifer_test_batches/batch_results_Q{question_id}_S*.csv[/dim]")
 
 
-def merge_batch_results(question_id: int, batch_files: list, total_students: int) -> str:
+def merge_batch_results(question_id: int, batch_files: list, start_student: int, end_student: int) -> str:
     """
     Merge all batch result CSV files into a single consolidated file.
     
     Args:
         question_id: Question ID
         batch_files: List of batch result file paths
-        total_students: Total number of students processed
+        start_student: Starting student number
+        end_student: Ending student number
     
     Returns:
         Path to merged file
@@ -182,7 +200,7 @@ def merge_batch_results(question_id: int, batch_files: list, total_students: int
         
         # Generate merged filename
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        merged_file = f"tests/merged_results_Q{question_id}_S0001-S{total_students:04d}_{timestamp}.csv"
+        merged_file = f"tests/classifer_test_batches/merged_results_Q{question_id}_S{start_student:04d}-S{end_student:04d}_{timestamp}.csv"
         
         all_rows = []
         header = None
@@ -263,6 +281,13 @@ async def main():
     )
     
     parser.add_argument(
+        "--start-student",
+        type=int,
+        default=1,
+        help="Starting student number (default: 1 for S0001)"
+    )
+    
+    parser.add_argument(
         "--batch-size",
         type=int,
         default=5,
@@ -274,6 +299,13 @@ async def main():
         type=int,
         default=2,
         help="Delay in seconds between batches (default: 2)"
+    )
+    
+    parser.add_argument(
+        "--extractor-csv",
+        type=str,
+        default=None,
+        help="Path to extractor results CSV file (skip extraction step if provided)"
     )
     
     args = parser.parse_args()
@@ -296,7 +328,9 @@ async def main():
         question_id=args.question_id,
         total_students=args.total_students,
         batch_size=args.batch_size,
-        delay_seconds=args.delay
+        delay_seconds=args.delay,
+        start_student=args.start_student,
+        extractor_csv=args.extractor_csv
     )
 
 

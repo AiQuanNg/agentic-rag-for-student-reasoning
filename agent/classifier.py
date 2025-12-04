@@ -6,10 +6,18 @@ Classifies student answers into three categories:
 - LATENT: Analysis & Synthesis & Evaluation (deeper reasoning) - PRIMARY RESEARCH FOCUS
 - OFF_TOPIC: No relevant understanding
 
+Classification Flow:
+1. Get question context (question_text with sub-questions)
+2. Call get_question_rubrics() - Get 0/50/100 level rubrics
+3. Call get_classification_criteria() - Get generic STANDARD/LATENT definitions
+4. Filter OFF_TOPIC (comprehension check)
+5. Classify STANDARD vs LATENT (rubric-based depth check + latent signals)
+6. Flag novel terms with importance scores for Aggregator routing
+
 Uses hybrid approach:
-- Leverages Extractor output (keywords, themes, novel terms)
-- References rubrics and criteria from database
-- Routes low-confidence LATENT answers to Aggregator for theme discovery
+- Leverages Extractor output (topics, novel terms, themes, keywords)
+- References rubrics (question-specific) and criteria (generic) from database
+- Routes medium-confidence LATENT answers to Aggregator for theme discovery
 
 Architecture: per-agent LLM config, question context integration,
 single-attempt strategy (Orchestrator handles retries).
@@ -56,11 +64,7 @@ class ClassifierDependencies:
     """
     db_pool: asyncpg.Pool
     question_id: int
-    
-    # Optional: Question context (fetched upstream, not via tool)
-    question_text: str = None
-    question_goal: str = None
-    question_topic: str = None
+    question_text: str  # Full question text - LLM infers goal/topic from this
 
 
 # Initialize Classifier agent with configured provider
@@ -75,17 +79,30 @@ classifier_agent = Agent(
 @classifier_agent.tool
 async def get_question_rubrics(
     ctx: RunContext[ClassifierDependencies]
-) -> Dict[str, str]:
+) -> Dict[str, Any]:
     """
-    Get ALL rubrics for this question (no filtering).
+    Get question-specific rubrics for ALL three levels (0%, 50%, 100%).
     
-    Returns rubrics at all three levels (100%, 50%, 0%) as context
-    for LLM classification. NOT similarity-based retrieval.
+    Returns rubrics that define:
+    - Level 0: Minimal/no understanding
+    - Level 50: Partial understanding (definitions, basic concepts)
+    - Level 100: Full understanding (mechanisms, implications, connections)
+    
+    These are question-specific and should be combined with question_text
+    to assess answer depth.
+    
+    Returns:
+        {
+            "level_0": "Criteria for minimal understanding",
+            "level_50": "Criteria for partial understanding", 
+            "level_100": "Criteria for full understanding",
+            "question_id": int
+        }
     """
     try:
         tools = RubricTools(ctx.deps.db_pool)
         rubrics = await tools.get_question_rubrics(ctx.deps.question_id)
-        logger.debug(f"Retrieved {len(rubrics)} rubrics for Q{ctx.deps.question_id}")
+        logger.debug(f"Retrieved rubrics for Q{ctx.deps.question_id}: {list(rubrics.keys())}")
         return rubrics
     
     except Exception as e:
@@ -98,16 +115,36 @@ async def get_classification_criteria(
     ctx: RunContext[ClassifierDependencies]
 ) -> Dict[str, Dict[str, str]]:
     """
-    Get Standard vs Latent classification criteria.
+    Get generic classification criteria for STANDARD vs LATENT.
     
     Returns definitions that help distinguish between:
-    - Standard answers (Comprehension & Recall)
-    - Latent answers (Analysis & Synthesis & Evaluation)
+    - STANDARD: Comprehension & Recall (surface-level)
+    - LATENT: Analysis & Synthesis & Evaluation (deeper reasoning)
+    - OFF_TOPIC: No relevant understanding
+    
+    These are generic guidelines - use question-specific rubrics
+    (from get_question_rubrics) for primary depth assessment.
+    
+    Returns:
+        {
+            "standard": {
+                "definition": "...",
+                "indicators": [...]
+            },
+            "latent": {
+                "definition": "...",
+                "indicators": [...]
+            },
+            "off_topic": {
+                "definition": "...",
+                "indicators": [...]
+            }
+        }
     """
     try:
         tools = RubricTools(ctx.deps.db_pool)
         criteria = await tools.get_classification_criteria()
-        logger.debug(f"Retrieved {len(criteria)} classification criteria")
+        logger.debug(f"Retrieved {len(criteria)} classification criteria categories")
         return criteria
     
     except Exception as e:
@@ -115,78 +152,165 @@ async def get_classification_criteria(
         return {}
 
 
+async def fetch_question_context(
+    db_pool: asyncpg.Pool,
+    question_id: int
+) -> str:
+    """
+    Fetch question text from database.
+    
+    Returns:
+        question_text: Full question text with sub-questions
+    """
+    try:
+        async with db_pool.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT question_text
+                FROM questions
+                WHERE id = $1
+            """, question_id)
+            
+            if row:
+                return row['question_text']
+            else:
+                logger.warning(f"Question {question_id} not found in database")
+                return ""
+    
+    except Exception as e:
+        logger.error(f"Failed to fetch question text for Q{question_id}: {e}")
+        return ""
+
+
 async def classify_answer(
     db_pool: asyncpg.Pool,
     question_id: int,
     answer_text: str,
     extraction_results: Any,  # ExtractionResult from Extractor
-    question_text: str = None,
-    question_goal: str = None,
-    question_topic: str = None
+    question_text: str = None
 ) -> ClassificationResult:
     """
     Classify student answer as Standard, Latent, or Off-topic.
     
+    Classification Flow:
+    1. Get question context (fetch question_text if not provided)
+    2. Call get_question_rubrics() - 0/50/100 level rubrics
+    3. Call get_classification_criteria() - Generic STANDARD/LATENT definitions
+    4. Filter OFF_TOPIC (comprehension check)
+    5. Classify STANDARD vs LATENT (rubric-based + latent signals)
+    6. Flag novel terms with importance scores
+    
     Uses hybrid approach:
     1. Student answer text
-    2. Question context (optional but recommended)
-    3. Extraction results (keywords, themes, novel terms)
-    4. Rubrics and criteria from database tools
-    
-    Single-attempt strategy - Orchestrator manages retries.
+    2. Question text (LLM infers goal/topic/sub-questions from this)
+    3. Extraction results (topics, novel terms, themes, keywords)
+    4. Rubrics (question-specific 0/50/100 levels)
+    5. Criteria (generic STANDARD/LATENT definitions)
     
     Args:
         db_pool: Database connection pool
         question_id: Which question (1-4)
         answer_text: Student's full answer
-        extraction_results: Output from Extractor Agent
-        question_text: Optional - exact question text
-        question_goal: Optional - learning goal (e.g., "Learn basics")
-        question_topic: Optional - topic area (e.g., "fundamentals")
+        extraction_results: Output from Extractor Agent (ExtractionResult)
+        question_text: Optional - full question text (fetched if not provided)
     
     Returns:
-        ClassificationResult with label, confidence, reasoning, evidence, etc.
+        ClassificationResult with:
+        - label (standard|latent|off_topic)
+        - classification_confidence
+        - rubric_assessment (Level 0/50/100 alignment)
+        - flagged_novel_terms (with importance scores for Aggregator)
+        - latent_signals_summary
+        - evidence_spans
+        - reasoning
+        - aggregator_recommendation
     """
     try:
+        # Step 1: Get question text if not provided
+        if not question_text:
+            logger.info(f"Fetching question text for Q{question_id}")
+            question_text = await fetch_question_context(db_pool, question_id)
+        
         # Create dependencies with question context
         deps = ClassifierDependencies(
             db_pool=db_pool,
             question_id=question_id,
-            question_text=question_text,
-            question_goal=question_goal,
-            question_topic=question_topic
+            question_text=question_text
         )
         
-        # Build classification prompt with all context
-        classification_prompt = f"""Classify this student answer.
+        # Build classification prompt following the flow
+        classification_prompt = f"""Classify this student answer following the three-step process.
 
-QUESTION CONTEXT:
-Question #{question_id}
-{f"Text: {question_text}" if question_text else ""}
-{f"Goal: {question_goal}" if question_goal else ""}
-{f"Topic: {question_topic}" if question_topic else ""}
+## QUESTION CONTEXT (Step 1 - Understand the Question)
+Question #{question_id}:
+{question_text}
 
-STUDENT ANSWER:
+**Your task**: Identify the question goal (e.g., "Learn basics", "Apply knowledge", "Evaluate risks"), topic area (e.g., "fundamentals", "applications", "ethics"), and sub-questions from the question text above.
+
+## STUDENT ANSWER
 {answer_text}
 
-EXTRACTOR FINDINGS:
-- Keywords: {', '.join(extraction_results.matched_keywords) if extraction_results.matched_keywords else 'None'}
-- Themes: {', '.join(extraction_results.detected_themes) if extraction_results.detected_themes else 'None'}
-- Novel Terms: {', '.join(extraction_results.novel_terms) if extraction_results.novel_terms else 'None'}
-- Confidence: {extraction_results.extraction_confidence:.2f}
+## EXTRACTOR FINDINGS (Three-Tier Output)
 
-CLASSIFICATION TASK:
-1. Call get_question_rubrics() to see rubric expectations
-2. Call get_classification_criteria() to understand Standard vs Latent
-3. Analyze for LATENT signals (primary research focus)
-4. Determine if STANDARD, LATENT, or OFF_TOPIC
+**Tier 1: Topics** (Sub-questions addressed)
+{', '.join(extraction_results.topic) if extraction_results.topic else 'None'}
 
-Output ONLY JSON matching ClassificationResult schema."""
+**Tier 2: Novel Terms** (New concepts - PRIMARY FOCUS)
+{', '.join(extraction_results.novel_terms) if extraction_results.novel_terms else 'None'}
+
+**Tier 3: Themes** (Broad categories)
+{', '.join(extraction_results.detected_themes) if extraction_results.detected_themes else 'None'}
+
+**Legacy Fields:**
+- Matched Keywords: {', '.join(extraction_results.matched_keywords) if extraction_results.matched_keywords else 'None'}
+- Extraction Confidence: {extraction_results.extraction_confidence:.2f}
+
+## CLASSIFICATION TASK
+
+Follow this exact flow:
+
+**Step 2: Get Tools (REQUIRED)**
+1. Call get_question_rubrics() → Get 0/50/100 level rubrics for Q{question_id}
+2. Call get_classification_criteria() → Get generic STANDARD/LATENT definitions
+
+**Step 3: Comprehension Check (Off-topic Filter)**
+- Does answer meet Level 0 rubric?
+- Are there matched_keywords OR novel_terms?
+- If NO → OFF_TOPIC
+
+**Step 4: Rubric-Based Depth Assessment**
+- Does answer meet Level 100 rubric? (REQUIRED for LATENT)
+  - YES → Check latent signals (mechanisms, novel terms, critical thinking)
+  - NO → Check Level 50
+    - Meets Level 50 → STANDARD
+    - Below Level 50 → OFF_TOPIC or LOW STANDARD
+
+**Step 5: Novel Term Flagging**
+- For each novel term from Tier 2, calculate importance score:
+  - Specificity (40%): Multi-word technical compound vs. generic
+  - Usage depth (30%): In mechanism explanation vs. just listed
+  - Rubric alignment (20%): Contributes to Level 100 understanding
+  - Frequency (10%): How often term appears
+- Flag HIGH/MEDIUM/LOW priority for Aggregator routing
+
+## OUTPUT REQUIREMENTS
+
+Return JSON matching ClassificationResult schema with:
+- label: "standard"|"latent"|"off_topic"
+- classification_confidence: 0.0-1.0
+- rubric_assessment: Level 0/50/100 met, evidence quotes
+- flagged_novel_terms: Each term with importance_score, priority, evidence_spans
+- latent_signals_summary: Mechanism quotes, critical engagement, etc.
+- three_tier_context: Topics, novel terms, themes counts
+- question_alignment: Include inferred goal and topic from question_text
+- aggregator_recommendation: ROUTE|STORE|BASELINE with reason
+
+**CRITICAL**: LATENT classification REQUIRES Level 100 rubric met. If Level 100 not met, classify as STANDARD or OFF_TOPIC."""
         
         # Get temperature from config
         config = provider_manager.get_agent_config("classifier")
         
         # Run classifier (single attempt)
+        logger.info(f"Running classifier for Q{question_id}...")
         result = await classifier_agent.run(
             classification_prompt,
             deps=deps,
@@ -196,13 +320,19 @@ Output ONLY JSON matching ClassificationResult schema."""
         logger.info(
             f"Classification complete: Q{question_id}, "
             f"label={result.data.label}, "
-            f"confidence={result.data.classification_confidence:.2f}"
+            f"confidence={result.data.classification_confidence:.2f}, "
+            f"rubric_level={result.data.rubric_assessment.get('rubric_level_achieved', 'unknown') if hasattr(result.data, 'rubric_assessment') and result.data.rubric_assessment else 'unknown'}"
         )
+        
+        # Log novel terms flagged
+        if hasattr(result.data, 'flagged_novel_terms') and result.data.flagged_novel_terms:
+            high_priority = sum(1 for t in result.data.flagged_novel_terms if t.get('priority') == 'HIGH')
+            logger.info(f"Flagged {len(result.data.flagged_novel_terms)} novel terms ({high_priority} HIGH priority)")
         
         return result.data
     
     except Exception as e:
-        logger.error(f"Classification failed for Q{question_id}: {e}")
+        logger.error(f"Classification failed for Q{question_id}: {e}", exc_info=True)
         
         # Return minimal result on failure
         return ClassificationResult(
@@ -210,7 +340,24 @@ Output ONLY JSON matching ClassificationResult schema."""
             classification_confidence=0.0,
             evidence_spans=[],
             reasoning=f"Classification failed: {str(e)}",
-            rubric_alignment={},
-            extractor_context={},
-            criteria_assessment={}
+            rubric_alignment={
+                "matches_level_100": False,
+                "matches_level_50": False,
+                "matches_level_0": False,
+                "rubric_reasoning": "Classification error"
+            },
+            extractor_context={
+                "topics_found": len(extraction_results.topic) if extraction_results and extraction_results.topic else 0,
+                "novel_terms_found": len(extraction_results.novel_terms) if extraction_results and extraction_results.novel_terms else 0,
+                "keywords_found": len(extraction_results.matched_keywords) if extraction_results and extraction_results.matched_keywords else 0,
+                "extraction_confidence": extraction_results.extraction_confidence if extraction_results else 0.0
+            },
+            criteria_assessment={
+                "error": [str(e)]  # Changed to list to match Dict[str, List[str]]
+            },
+            flagged_novel_terms=[],
+            aggregator_recommendation={
+                "route_to_aggregator": False,
+                "reason": "Classification error"
+            }
         )

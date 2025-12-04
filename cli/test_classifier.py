@@ -77,6 +77,59 @@ class ClassifierTester:
         self.db_url = db_url
         self.db_pool: Optional[asyncpg.Pool] = None
         self.results: List[Dict[str, Any]] = []
+        self.extractor_cache: Dict[int, ExtractionResult] = {}  # Cache for loaded extractor results
+    
+    def load_extractor_results_from_csv(self, csv_path: str) -> Dict[int, ExtractionResult]:
+        """
+        Load extractor results from CSV file.
+        
+        Args:
+            csv_path: Path to extractor results CSV file
+            
+        Returns:
+            Dictionary mapping answer_id to ExtractionResult
+        """
+        import csv
+        
+        extractor_results = {}
+        
+        try:
+            with open(csv_path, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                
+                for row in reader:
+                    answer_id = int(row['answer_id'])
+                    
+                    # Parse lists from pipe-separated strings
+                    matched_keywords = row.get('matched_keywords', '').split('|') if row.get('matched_keywords') else []
+                    detected_themes = row.get('detected_themes', '').split('|') if row.get('detected_themes') else []
+                    novel_terms = row.get('novel_terms', '').split('|') if row.get('novel_terms') else []
+                    topic = row.get('topic', '').split('|') if row.get('topic') else []
+                    evidence_spans = row.get('evidence_spans', '').split('|') if row.get('evidence_spans') else []
+                    
+                    # Create ExtractionResult object
+                    extraction = ExtractionResult(
+                        topic=topic,
+                        matched_keywords=matched_keywords,
+                        detected_themes=detected_themes,
+                        novel_terms=novel_terms,
+                        extraction_confidence=float(row.get('extraction_confidence', 0.0)),
+                        evidence_spans=evidence_spans,
+                        reasoning=f"Loaded from CSV: {csv_path}"
+                    )
+                    
+                    extractor_results[answer_id] = extraction
+                    
+            logger.info(f"Loaded {len(extractor_results)} extractor results from {csv_path}")
+            console.print(f"[green]✓ Loaded {len(extractor_results)} extractor results from CSV[/green]")
+            
+            self.extractor_cache = extractor_results
+            return extractor_results
+            
+        except Exception as e:
+            logger.error(f"Failed to load extractor results from CSV: {e}")
+            console.print(f"[red]✗ Failed to load extractor results: {e}[/red]")
+            raise
     
     async def connect_db(self):
         """Create database connection pool."""
@@ -133,41 +186,29 @@ class ClassifierTester:
     
     async def fetch_question_context(self, question_id: int) -> Dict[str, Any]:
         """
-        Fetch question metadata for context (optional but recommended).
+        Fetch question text from database.
         
         Args:
             question_id: Question ID
         
         Returns:
-            Dictionary with question_text, goal, topic
+            Dictionary with question_text (LLM infers goal/topic from this)
         """
         try:
             async with self.db_pool.acquire() as conn:
                 row = await conn.fetchrow("""
-                    SELECT id, text, metadata
+                    SELECT text as question_text
                     FROM questions
                     WHERE id = $1
                 """, question_id)
             
             if not row:
-                return {'question_text': None, 'question_goal': None, 'question_topic': None}
+                return {'question_text': None}
             
-            # Parse metadata JSON
-            metadata = {}
-            if row['metadata']:
-                try:
-                    metadata = json.loads(row['metadata'])
-                except:
-                    pass
-            
-            return {
-                'question_text': row['text'],
-                'question_goal': metadata.get('goal'),
-                'question_topic': metadata.get('topic')
-            }
+            return dict(row)
         except Exception as e:
             logger.warning(f"Failed to fetch question context: {e}")
-            return {'question_text': None, 'question_goal': None, 'question_topic': None}
+            return {'question_text': None}
     
     async def process_answer(
         self,
@@ -180,7 +221,7 @@ class ClassifierTester:
         Process single answer through Extractor and Classifier pipeline.
         
         Pipeline:
-        1. Extract keywords/themes from answer (via Extractor Agent)
+        1. Extract keywords/themes from answer (via Extractor Agent OR load from cache)
         2. Pass extraction results to Classifier Agent
         3. Classify as STANDARD, LATENT, or OFF_TOPIC
         4. Return combined result
@@ -195,13 +236,19 @@ class ClassifierTester:
             Result dictionary with extraction + classification data
         """
         try:
-            # STEP 1: Extract keywords/themes (via Extractor Agent)
-            logger.info(f"Extracting from answer {answer_id}...")
-            extraction = await extract_keywords(
-                db_pool=self.db_pool,
-                question_id=question_id,
-                answer_text=answer_text
-            )
+            # STEP 1: Extract keywords/themes (via Extractor Agent OR load from cache)
+            if answer_id in self.extractor_cache:
+                # Use cached extractor results from CSV
+                logger.info(f"Using cached extraction for answer {answer_id}...")
+                extraction = self.extractor_cache[answer_id]
+            else:
+                # Run extractor agent
+                logger.info(f"Extracting from answer {answer_id}...")
+                extraction = await extract_keywords(
+                    db_pool=self.db_pool,
+                    question_id=question_id,
+                    answer_text=answer_text
+                )
             
             # STEP 2: Classify the answer (via Classifier Agent)
             logger.info(f"Classifying answer {answer_id}...")
@@ -210,19 +257,19 @@ class ClassifierTester:
                 question_id=question_id,
                 answer_text=answer_text,
                 extraction_results=extraction,
-                question_text=question_context['question_text'],
-                question_goal=question_context['question_goal'],
-                question_topic=question_context['question_topic']
+                question_text=question_context.get('question_text')
             )
             
-            # STEP 3: Build combined result
+            # STEP 3: Build combined result with NEW classifier output structure
             result = {
                 # Metadata
                 'answer_id': answer_id,
                 'question_id': question_id,
+                'answer_text': answer_text,
                 'status': 'success',
                 
                 # Extraction results (from Extractor Agent)
+                'topic': extraction.topic,
                 'matched_keywords': extraction.matched_keywords,
                 'detected_themes': extraction.detected_themes,
                 'novel_terms': extraction.novel_terms,
@@ -234,12 +281,25 @@ class ClassifierTester:
                 'reasoning': classification.reasoning,
                 'evidence_spans': classification.evidence_spans,
                 
-                # Supporting info
-                'rubric_level_100': classification.rubric_alignment.get('matches_level_100', False),
-                'rubric_level_50': classification.rubric_alignment.get('matches_level_50', False),
-                'latent_mechanisms': len(classification.latent_signals.get('mechanism_explanations', [])),
-                'latent_novel_terms': len(classification.latent_signals.get('novel_terminology', [])),
-                'aggregator_recommendation': classification.aggregator_recommendation,
+                # NEW: Rubric assessment (Level 0/50/100)
+                'rubric_level_achieved': classification.rubric_assessment.get('rubric_level_achieved', 'unknown') if hasattr(classification, 'rubric_assessment') and classification.rubric_assessment else 'unknown',
+                'rubric_level_100': classification.rubric_assessment.get('level_100_met', False) if hasattr(classification, 'rubric_assessment') and classification.rubric_assessment else False,
+                'rubric_level_50': classification.rubric_assessment.get('level_50_met', False) if hasattr(classification, 'rubric_assessment') and classification.rubric_assessment else False,
+                'rubric_level_0': classification.rubric_assessment.get('level_0_met', False) if hasattr(classification, 'rubric_assessment') and classification.rubric_assessment else False,
+                
+                # NEW: Flagged novel terms with importance scores
+                'flagged_novel_terms_count': len(classification.flagged_novel_terms) if hasattr(classification, 'flagged_novel_terms') and classification.flagged_novel_terms else 0,
+                'high_priority_terms': [t.get('term', '') for t in classification.flagged_novel_terms if t.get('priority') == 'HIGH'] if hasattr(classification, 'flagged_novel_terms') and classification.flagged_novel_terms else [],
+                'medium_priority_terms': [t.get('term', '') for t in classification.flagged_novel_terms if t.get('priority') == 'MEDIUM'] if hasattr(classification, 'flagged_novel_terms') and classification.flagged_novel_terms else [],
+                
+                # NEW: Latent signals summary
+                'latent_mechanism_explanations': classification.latent_signals_summary.get('mechanism_explanations', []) if hasattr(classification, 'latent_signals_summary') and classification.latent_signals_summary else [],
+                'latent_novel_terms_in_mechanisms': classification.latent_signals_summary.get('novel_terms_in_mechanisms', []) if hasattr(classification, 'latent_signals_summary') and classification.latent_signals_summary else [],
+                'latent_critical_engagement': bool(classification.latent_signals_summary.get('critical_engagement')) if hasattr(classification, 'latent_signals_summary') and classification.latent_signals_summary else False,
+                
+                # Aggregator recommendation (updated structure)
+                'aggregator_recommendation': classification.aggregator_recommendation.get('route_to_aggregator', False) if hasattr(classification, 'aggregator_recommendation') and isinstance(classification.aggregator_recommendation, dict) else (classification.aggregator_recommendation if hasattr(classification, 'aggregator_recommendation') else False),
+                'aggregator_reason': classification.aggregator_recommendation.get('reason', '') if hasattr(classification, 'aggregator_recommendation') and isinstance(classification.aggregator_recommendation, dict) else '',
                 
                 # Error tracking
                 'error': None
@@ -258,7 +318,9 @@ class ClassifierTester:
             return {
                 'answer_id': answer_id,
                 'question_id': question_id,
+                'answer_text': answer_text,
                 'status': 'error',
+                'topic': [],
                 'matched_keywords': [],
                 'detected_themes': [],
                 'novel_terms': [],
@@ -267,11 +329,18 @@ class ClassifierTester:
                 'classification_confidence': 0.0,
                 'reasoning': '',
                 'evidence_spans': [],
+                'rubric_level_achieved': 'unknown',
                 'rubric_level_100': False,
                 'rubric_level_50': False,
-                'latent_mechanisms': 0,
-                'latent_novel_terms': 0,
-                'aggregator_recommendation': 'BASELINE',
+                'rubric_level_0': False,
+                'flagged_novel_terms_count': 0,
+                'high_priority_terms': [],
+                'medium_priority_terms': [],
+                'latent_mechanism_explanations': [],
+                'latent_novel_terms_in_mechanisms': [],
+                'latent_critical_engagement': False,
+                'aggregator_recommendation': False,
+                'aggregator_reason': 'Error',
                 'error': str(e)
             }
     
@@ -320,10 +389,8 @@ class ClassifierTester:
         # Fetch question context for calibration
         console.print("[cyan]Fetching question context...[/cyan]")
         question_context = await self.fetch_question_context(question_id)
-        if question_context['question_text']:
+        if question_context.get('question_text'):
             console.print(f"[green]Question: {question_context['question_text'][:60]}...[/green]")
-            if question_context['question_goal']:
-                console.print(f"[green]Goal: {question_context['question_goal']}[/green]")
         
         # Process with progress bar
         self.results = []
@@ -388,7 +455,7 @@ class ClassifierTester:
             avg_confidence = min_confidence = max_confidence = 0.0
         
         # Aggregator routing
-        route_to_aggregator = sum(1 for r in self.results if r['aggregator_recommendation'] == 'ROUTE')
+        route_to_aggregator = sum(1 for r in self.results if r.get('aggregator_recommendation') == True or r.get('aggregator_recommendation') == 'ROUTE')
         
         # Summary table
         summary_table = Table(title="Batch Classification Summary", show_header=True)
@@ -431,9 +498,11 @@ class ClassifierTester:
         results_table.add_column("Status", style="magenta", width=8)
         results_table.add_column("Label", style="yellow", width=10)
         results_table.add_column("Conf", style="green", width=5)
+        results_table.add_column("Rubric", style="blue", width=6)
+        results_table.add_column("Topics", style="bright_magenta", width=7)
         results_table.add_column("Keywords", style="blue", width=8)
-        results_table.add_column("Themes", style="blue", width=8)
-        results_table.add_column("Latent\nSignals", style="red", width=8)
+        results_table.add_column("Novel\nTerms", style="red", width=8)
+        results_table.add_column("Flagged\n(H/M)", style="yellow", width=8)
         results_table.add_column("Agg", style="magenta", width=8)
         
         for result in self.results:
@@ -448,21 +517,32 @@ class ClassifierTester:
                     label_text = Text(label, style="red")
                 
                 # Latent signals indicator
-                latent_count = result['latent_mechanisms'] + result['latent_novel_terms']
+                high_priority = len(result.get('high_priority_terms', []))
+                medium_priority = len(result.get('medium_priority_terms', []))
                 
                 # Aggregator recommendation
-                agg_rec = result['aggregator_recommendation']
-                agg_style = "magenta" if agg_rec == "ROUTE" else "green"
+                agg_rec = result.get('aggregator_recommendation')
+                if agg_rec == True or agg_rec == 'ROUTE':
+                    agg_text = "ROUTE"
+                    agg_style = "magenta"
+                elif agg_rec == False or agg_rec == 'BASELINE':
+                    agg_text = "BASELINE"
+                    agg_style = "green"
+                else:
+                    agg_text = str(agg_rec) if agg_rec else "BASELINE"
+                    agg_style = "green"
                 
                 results_table.add_row(
                     str(result['answer_id']),
                     result['status'].upper(),
                     label_text,
                     f"{result['classification_confidence']:.2f}",
+                    result.get('rubric_level_achieved', 'unknown'),
+                    str(len(result['topic'])),
                     str(len(result['matched_keywords'])),
-                    str(len(result['detected_themes'])),
-                    str(latent_count),
-                    Text(agg_rec, style=agg_style)
+                    str(len(result['novel_terms'])),
+                    f"{high_priority}/{medium_priority}",
+                    Text(agg_text, style=agg_style)
                 )
             else:
                 results_table.add_row(
@@ -470,9 +550,11 @@ class ClassifierTester:
                     "ERROR",
                     "N/A",
                     "0.00",
+                    "unknown",
                     "0",
                     "0",
                     "0",
+                    "0/0",
                     "BASELINE"
                 )
         
@@ -484,23 +566,24 @@ class ClassifierTester:
         if latent_results:
             console.print("\n[bold cyan]=== LATENT DISCOVERIES (Research Findings) ===[/bold cyan]")
             
-            high_conf_latent = [r for r in latent_results if r['classification_confidence'] >= 0.70]
-            route_latent = [r for r in latent_results if r['aggregator_recommendation'] == 'ROUTE']
+            high_conf_latent = [r for r in latent_results if r['classification_confidence'] >= 0.75]
+            route_latent = [r for r in latent_results if r.get('aggregator_recommendation') == True or r.get('aggregator_recommendation') == 'ROUTE']
             
-            console.print(f"\nHigh-Confidence LATENT (≥0.70): {len(high_conf_latent)}")
+            console.print(f"\nHigh-Confidence LATENT (≥0.75): {len(high_conf_latent)}")
             for r in high_conf_latent[:5]:  # Show top 5
                 console.print(
                     f"  • Answer {r['answer_id']}: "
                     f"confidence={r['classification_confidence']:.2f}, "
-                    f"signals={r['latent_mechanisms'] + r['latent_novel_terms']}"
+                    f"rubric={r.get('rubric_level_achieved', 'unknown')}, "
+                    f"flagged_terms={len(r.get('high_priority_terms', []))}H/{len(r.get('medium_priority_terms', []))}M"
                 )
             
             console.print(f"\nEmerging LATENT Insights (→ Aggregator): {len(route_latent)}")
             for r in route_latent[:5]:  # Show top 5
                 console.print(
                     f"  • Answer {r['answer_id']}: "
-                    f"confidence={r['classification_confidence']:.2f} "
-                    f"[{r['aggregator_recommendation']}]"
+                    f"confidence={r['classification_confidence']:.2f}, "
+                    f"reason={r.get('aggregator_reason', 'Unknown')}"
                 )
     
     def save_results(self, output_path: str = None) -> Optional[str]:
@@ -541,9 +624,12 @@ class ClassifierTester:
                     'answer_id',
                     'question_id',
                     'status',
+                    'answer_text',
                     
                     # Extraction results
                     'extraction_confidence',
+                    'topic_count',
+                    'topic',
                     'matched_keywords_count',
                     'detected_themes_count',
                     'novel_terms_count',
@@ -558,16 +644,25 @@ class ClassifierTester:
                     'evidence_spans_count',
                     'evidence_spans',
                     
-                    # Rubric alignment
+                    # Rubric assessment (NEW)
+                    'rubric_level_achieved',
                     'rubric_level_100',
                     'rubric_level_50',
+                    'rubric_level_0',
                     
-                    # Latent signals
-                    'latent_mechanisms_count',
-                    'latent_novel_terms_count',
+                    # Novel term flagging (NEW)
+                    'flagged_novel_terms_count',
+                    'high_priority_terms',
+                    'medium_priority_terms',
                     
-                    # Aggregator routing
+                    # Latent signals (NEW)
+                    'latent_mechanism_explanations',
+                    'latent_novel_terms_in_mechanisms',
+                    'latent_critical_engagement',
+                    
+                    # Aggregator routing (UPDATED)
                     'aggregator_recommendation',
+                    'aggregator_reason',
                     
                     # Error tracking
                     'error'
@@ -582,9 +677,12 @@ class ClassifierTester:
                         'answer_id': result['answer_id'],
                         'question_id': result['question_id'],
                         'status': result['status'],
+                        'answer_text': result['answer_text'],
                         
                         # Extraction results
                         'extraction_confidence': result['extraction_confidence'],
+                        'topic_count': len(result['topic']),
+                        'topic': '|'.join(result['topic']),
                         'matched_keywords_count': len(result['matched_keywords']),
                         'detected_themes_count': len(result['detected_themes']),
                         'novel_terms_count': len(result['novel_terms']),
@@ -599,16 +697,25 @@ class ClassifierTester:
                         'evidence_spans_count': len(result['evidence_spans']),
                         'evidence_spans': '|'.join(result['evidence_spans']),
                         
-                        # Rubric alignment
+                        # Rubric assessment (NEW)
+                        'rubric_level_achieved': result['rubric_level_achieved'],
                         'rubric_level_100': result['rubric_level_100'],
                         'rubric_level_50': result['rubric_level_50'],
+                        'rubric_level_0': result['rubric_level_0'],
                         
-                        # Latent signals
-                        'latent_mechanisms_count': result['latent_mechanisms'],
-                        'latent_novel_terms_count': result['latent_novel_terms'],
+                        # Novel term flagging (NEW)
+                        'flagged_novel_terms_count': result['flagged_novel_terms_count'],
+                        'high_priority_terms': '|'.join(result['high_priority_terms']),
+                        'medium_priority_terms': '|'.join(result['medium_priority_terms']),
                         
-                        # Aggregator routing
-                        'aggregator_recommendation': result['aggregator_recommendation'],
+                        # Latent signals (NEW)
+                        'latent_mechanism_explanations': '|'.join(result['latent_mechanism_explanations']),
+                        'latent_novel_terms_in_mechanisms': '|'.join(result['latent_novel_terms_in_mechanisms']),
+                        'latent_critical_engagement': result['latent_critical_engagement'],
+                        
+                        # Aggregator routing (UPDATED)
+                        'aggregator_recommendation': 'ROUTE' if result['aggregator_recommendation'] else 'BASELINE',
+                        'aggregator_reason': result['aggregator_reason'],
                         
                         # Error tracking
                         'error': result['error'] or ''
@@ -689,6 +796,13 @@ async def main():
         help="Database URL (uses DATABASE_URL env var if not provided)"
     )
     
+    parser.add_argument(
+        "--extractor-csv",
+        type=str,
+        default=None,
+        help="Path to extractor results CSV file (skip extraction step if provided)"
+    )
+    
     args = parser.parse_args()
     
     # Parse student IDs if provided
@@ -719,9 +833,19 @@ async def main():
         # Connect to database
         await tester.connect_db()
         
+        # Load extractor results from CSV if provided
+        if args.extractor_csv:
+            console.print(f"\n[cyan]Loading extractor results from: {args.extractor_csv}[/cyan]")
+            tester.load_extractor_results_from_csv(args.extractor_csv)
+        
         # Display configuration
         console.print("[bold cyan]=== CLASSIFIER AGENT TEST ===[/bold cyan]")
         tester.print_model_info()
+        
+        if args.extractor_csv:
+            console.print(f"[yellow]Mode: Using cached extractor results from CSV[/yellow]")
+        else:
+            console.print(f"[yellow]Mode: Running full pipeline (Extractor → Classifier)[/yellow]")
         
         # Run tests
         console.print(

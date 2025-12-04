@@ -1,0 +1,22 @@
+answer_id,question_id,status,answer_text,extraction_confidence,topic_count,topic,matched_keywords_count,detected_themes_count,novel_terms_count,matched_keywords,detected_themes,novel_terms,classification_label,classification_confidence,reasoning,evidence_spans_count,evidence_spans,rubric_level_achieved,rubric_level_100,rubric_level_50,rubric_level_0,flagged_novel_terms_count,high_priority_terms,medium_priority_terms,latent_mechanism_explanations,latent_novel_terms_in_mechanisms,latent_critical_engagement,aggregator_recommendation,aggregator_reason,error
+1281,1,error,AI is becoming a huge issue in society today. I saw on Reddit that people are worried about AI taking jobs and theres a lot of debate about whether companies should be allowed to use AI without telling customers. Someone posted a screenshot showing how AI can be biased against certain groups. I think we need better laws to regulate AI before it gets out of control. The ethics of AI is super important and we cant ignore it just because the technology is cool. This is something everyone should care about not just tech people.,0.0,0,,0,0,0,,,,error,0.0,,0,,unknown,False,False,False,0,,,,,False,BASELINE,Error,"2 validation errors for ClassificationResult
+criteria_assessment.error
+  Input should be a valid list [type=list_type, input_value='status_code: 400, model_...er_name\': \'Nvidia\'}}', input_type=str]
+    For further information visit https://errors.pydantic.dev/2.11/v/list_type
+aggregator_recommendation
+  Input should be 'BASELINE' or 'ROUTE' [type=literal_error, input_value={'route_to_aggregator': F... 'Classification error'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.11/v/literal_error"
+1282,1,error,I've been using AI tools a lot lately for my homework and they're really helpful! My roommate showed me this app that uses AI and its pretty amazing what it can do. I found a Twitter thread where someone was talking about how AI changed their workflow. Honestly I dont really understand the technical details of how any of it works but I know its based on algorithms or something. AI is definitely going to be huge in the future and everyone should learn to use it. I attached a screenshot from the Twitter discussion about AI productivity hacks.,0.0,0,,0,0,0,,,,error,0.0,,0,,unknown,False,False,False,0,,,,,False,BASELINE,Error,"2 validation errors for ClassificationResult
+criteria_assessment.error
+  Input should be a valid list [type=list_type, input_value='status_code: 400, model_...er_name\': \'Nvidia\'}}', input_type=str]
+    For further information visit https://errors.pydantic.dev/2.11/v/list_type
+aggregator_recommendation
+  Input should be 'BASELINE' or 'ROUTE' [type=literal_error, input_value={'route_to_aggregator': F... 'Classification error'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.11/v/literal_error"
+1283,1,error,AI is used in computer vision systems to recognize objects in images. I found some posts on Stack Overflow about image classification where the AI looks at pixels and identifies patterns. Like it can tell if theres a cat or dog in a photo. The system uses convolutional layers to process the visual data. Heres a screenshot from a Reddit post showing someone's AI that can detect faces. Its pretty cool how accurate these systems have gotten. Computer vision is probably the most important application of AI right now.,0.0,0,,0,0,0,,,,error,0.0,,0,,unknown,False,False,False,0,,,,,False,BASELINE,Error,"2 validation errors for ClassificationResult
+criteria_assessment.error
+  Input should be a valid list [type=list_type, input_value='status_code: 400, model_...er_name\': \'Nvidia\'}}', input_type=str]
+    For further information visit https://errors.pydantic.dev/2.11/v/list_type
+aggregator_recommendation
+  Input should be 'BASELINE' or 'ROUTE' [type=literal_error, input_value={'route_to_aggregator': F... 'Classification error'}, input_type=dict]
+    For further information visit https://errors.pydantic.dev/2.11/v/literal_error"

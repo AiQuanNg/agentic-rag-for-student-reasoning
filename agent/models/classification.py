@@ -85,10 +85,11 @@ class ClassificationResult(BaseModel):
                     "Example: {'mechanism_explanations': [...], 'novel_terminology': [...]}"
     )
     
-    aggregator_recommendation: Literal["BASELINE", "ROUTE"] = Field(
-        default="BASELINE",
+    aggregator_recommendation: Dict[str, Any] = Field(
+        default_factory=lambda: {"route_to_aggregator": False, "reason": ""},
         description="Whether to route this answer to Aggregator for theme discovery. "
-                    "ROUTE = emerging latent pattern worth investigating, BASELINE = standard classification"
+                    "Dict with 'route_to_aggregator' (bool) and 'reason' (str). "
+                    "route_to_aggregator=True means emerging latent pattern worth investigating"
     )
     
     # ========== METADATA ==========

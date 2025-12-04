@@ -27,6 +27,12 @@ class ExtractionResult(BaseModel):
         default_factory=list,
         description="Names of retrieval tools utilized (codebook, vector_search, etc.)."
     )
+    # Test new result column
+    topic: List[str] = Field(
+        default_factory=list,
+        description="Definition of generative AI or How it gathers information."
+    )
+    # End test new result column
     
     @field_validator('extraction_confidence')
     @classmethod
