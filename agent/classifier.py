@@ -1,18 +1,27 @@
 """
-Classifier Agent - Research-Focused Classification for Student Reasoning Discovery.
+Classifier Agent - Two-Layer Classification Strategy for Student Reasoning Discovery.
 
 Classifies student answers into three categories:
-- STANDARD: Comprehension & Recall (surface-level)
-- LATENT: Analysis & Synthesis & Evaluation (deeper reasoning) - PRIMARY RESEARCH FOCUS
+- STANDARD: Meets rubric expectations (Level 50 or Level 100 without latent signals)
+- LATENT: Meets Level 100 + demonstrates latent reasoning beyond rubric (PRIMARY RESEARCH FOCUS)
 - OFF_TOPIC: No relevant understanding
 
-Classification Flow:
-1. Get question context (question_text with sub-questions)
-2. Call get_question_rubrics() - Get 0/50/100 level rubrics
-3. Call get_classification_criteria() - Get generic STANDARD/LATENT definitions
-4. Filter OFF_TOPIC (comprehension check)
-5. Classify STANDARD vs LATENT (rubric-based depth check + latent signals)
-6. Flag novel terms with importance scores for Aggregator routing
+Classification Flow (Three Layers):
+1. LAYER 1: Pure rubric grading (categorical: 0/50/100)
+   - Assess answer against question-specific rubrics ONLY
+   - Output: level_achieved (0, 50, or 100)
+   - Level 100 = eligible for Layer 2
+
+2. LAYER 2: Latent signal detection (only if Level 100)
+   - Start from 0.0, score pure latent signals
+   - Components: mechanisms (0.30), novel terms (0.10), critical engagement (0.30),
+                 evidence (0.20), cross-domain (0.10)
+   - Output: latent_score (0.0-1.0)
+   - Score >= 0.75 → LATENT (high), >= 0.60 → LATENT (medium), < 0.60 → STANDARD
+
+3. LAYER 3: Novel term flagging (skip for OFF_TOPIC)
+   - Calculate importance scores for all novel terms
+   - Flag HIGH/MEDIUM/LOW priority for Aggregator routing
 
 Uses hybrid approach:
 - Leverages Extractor output (topics, novel terms, themes, keywords)
@@ -21,6 +30,8 @@ Uses hybrid approach:
 
 Architecture: per-agent LLM config, question context integration,
 single-attempt strategy (Orchestrator handles retries).
+
+Version: 4.0 - Two-Layer Separation: Rubric Grading → Latent Detection
 """
 
 import sys
@@ -189,22 +200,21 @@ async def classify_answer(
     question_text: str = None
 ) -> ClassificationResult:
     """
-    Classify student answer as Standard, Latent, or Off-topic.
+    Classify student answer as Standard, Latent, or Off-topic using two-layer approach.
     
-    Classification Flow:
-    1. Get question context (fetch question_text if not provided)
-    2. Call get_question_rubrics() - 0/50/100 level rubrics
-    3. Call get_classification_criteria() - Generic STANDARD/LATENT definitions
-    4. Filter OFF_TOPIC (comprehension check)
-    5. Classify STANDARD vs LATENT (rubric-based + latent signals)
-    6. Flag novel terms with importance scores
+    Classification Flow (Three Layers):
+    1. LAYER 1: Pure rubric grading (categorical: 0/50/100)
+       - Assess against question-specific rubrics only
+       - No latent signal consideration
     
-    Uses hybrid approach:
-    1. Student answer text
-    2. Question text (LLM infers goal/topic/sub-questions from this)
-    3. Extraction results (topics, novel terms, themes, keywords)
-    4. Rubrics (question-specific 0/50/100 levels)
-    5. Criteria (generic STANDARD/LATENT definitions)
+    2. LAYER 2: Latent signal detection (only if Level 100)
+       - Start from 0.0, score pure latent signals
+       - Mechanisms (0.30), novel terms (0.10), critical (0.30), evidence (0.20), cross-domain (0.10)
+       - >= 0.75 → LATENT (high), >= 0.60 → LATENT (medium), < 0.60 → STANDARD
+    
+    3. LAYER 3: Novel term flagging (skip for OFF_TOPIC)
+       - Calculate importance scores for all novel terms
+       - Flag HIGH/MEDIUM/LOW priority for Aggregator
     
     Args:
         db_pool: Database connection pool
@@ -215,14 +225,11 @@ async def classify_answer(
     
     Returns:
         ClassificationResult with:
-        - label (standard|latent|off_topic)
-        - classification_confidence
-        - rubric_assessment (Level 0/50/100 alignment)
-        - flagged_novel_terms (with importance scores for Aggregator)
-        - latent_signals_summary
-        - evidence_spans
-        - reasoning
-        - aggregator_recommendation
+        - layer_1_rubric_grading: Level achieved (0/50/100), evidence, reasoning
+        - layer_2_latent_detection: Signal scores, total_latent_score (only if level=100)
+        - layer_3_novel_terms: All novel terms with importance scores
+        - classification_reasoning: Summary of all three layers
+        - Legacy fields for backward compatibility (rubric_assessment, latent_signals_summary, flagged_novel_terms)
     """
     try:
         # Step 1: Get question text if not provided
@@ -237,14 +244,14 @@ async def classify_answer(
             question_text=question_text
         )
         
-        # Build classification prompt following the flow
-        classification_prompt = f"""Classify this student answer following the three-step process.
+        # Build classification prompt following the three-layer flow
+        classification_prompt = f"""Classify this student answer following the three-layer process.
 
-## QUESTION CONTEXT (Step 1 - Understand the Question)
+## QUESTION CONTEXT
 Question #{question_id}:
 {question_text}
 
-**Your task**: Identify the question goal (e.g., "Learn basics", "Apply knowledge", "Evaluate risks"), topic area (e.g., "fundamentals", "applications", "ethics"), and sub-questions from the question text above.
+**Your task**: Understand the question goal, topic area, and sub-questions from the question text above.
 
 ## STUDENT ANSWER
 {answer_text}
@@ -255,7 +262,8 @@ Question #{question_id}:
 {', '.join(extraction_results.topic) if extraction_results.topic else 'None'}
 
 **Tier 2: Novel Terms** (New concepts - PRIMARY FOCUS)
-{', '.join(extraction_results.novel_terms) if extraction_results.novel_terms else 'None'}
+Novel terms found: {', '.join(extraction_results.novel_terms) if extraction_results.novel_terms else 'None'}
+**Count: {len(extraction_results.novel_terms) if extraction_results.novel_terms else 0} terms**
 
 **Tier 3: Themes** (Broad categories)
 {', '.join(extraction_results.detected_themes) if extraction_results.detected_themes else 'None'}
@@ -264,47 +272,65 @@ Question #{question_id}:
 - Matched Keywords: {', '.join(extraction_results.matched_keywords) if extraction_results.matched_keywords else 'None'}
 - Extraction Confidence: {extraction_results.extraction_confidence:.2f}
 
-## CLASSIFICATION TASK
+## CLASSIFICATION TASK - THREE-LAYER PROCESS
 
-Follow this exact flow:
-
-**Step 2: Get Tools (REQUIRED)**
-1. Call get_question_rubrics() → Get 0/50/100 level rubrics for Q{question_id}
+**STEP 1: Get Tools (REQUIRED)**
+1. Call get_question_rubrics() → Get Level 0/50/100 rubrics for Q{question_id}
 2. Call get_classification_criteria() → Get generic STANDARD/LATENT definitions
 
-**Step 3: Comprehension Check (Off-topic Filter)**
-- Does answer meet Level 0 rubric?
-- Are there matched_keywords OR novel_terms?
-- If NO → OFF_TOPIC
+**STEP 2: LAYER 1 - Pure Rubric Grading (Categorical: 0/50/100)**
+- Compare answer against Level 100, then Level 50, then Level 0 rubrics
+- Determine which level is achieved (categorical, not numeric)
+- Output: level_achieved (0, 50, or 100)
+- **CRITICAL**: This is pure rubric alignment - do NOT consider latent signals here
 
-**Step 4: Rubric-Based Depth Assessment**
-- Does answer meet Level 100 rubric? (REQUIRED for LATENT)
-  - YES → Check latent signals (mechanisms, novel terms, critical thinking)
-  - NO → Check Level 50
-    - Meets Level 50 → STANDARD
-    - Below Level 50 → OFF_TOPIC or LOW STANDARD
+**STEP 3: LAYER 2 - Latent Signal Detection (ONLY if Level 100)**
+- **Eligibility check**: Only run if level_achieved = 100
+- **Start from 0.0** - Calculate pure latent score from scratch:
+  - Mechanism explanations: 0.0 - 0.30 (beyond rubric expectations)
+  - Novel terms in context: 0.0 - 0.10 (well-integrated usage)
+  - Critical engagement: 0.0 - 0.30 (trade-offs, analysis)
+  - Evidence & specificity: 0.0 - 0.20 (research quality)
+  - Cross-domain thinking: 0.0 - 0.10 (synthesis)
+- **Total latent_score**: 0.0 - 1.00 (sum of above, NO modulation)
+- **Classification**:
+  - latent_score >= 0.75 → LATENT (high confidence)
+  - latent_score >= 0.60 → LATENT (medium confidence, flag for Aggregator)
+  - latent_score < 0.60 → STANDARD (meets 100 but not latent)
+- If Level 100 NOT achieved:
+  - Level 50 → STANDARD
+  - Level 0 → OFF_TOPIC
 
-**Step 5: Novel Term Flagging**
-- For each novel term from Tier 2, calculate importance score:
-  - Specificity (40%): Multi-word technical compound vs. generic
-  - Usage depth (30%): In mechanism explanation vs. just listed
-  - Rubric alignment (20%): Contributes to Level 100 understanding
-  - Frequency (10%): How often term appears
-- Flag HIGH/MEDIUM/LOW priority for Aggregator routing
+**STEP 4: LAYER 3 - Novel Term Flagging (Skip for OFF_TOPIC)**
+- **You MUST flag all {len(extraction_results.novel_terms) if extraction_results.novel_terms else 0} novel terms from Tier 2**
+- Calculate importance scores using the formula from system prompt
+- Assign priority: HIGH (≥0.70) / MEDIUM (≥0.50) / LOW (<0.50)
+- Include evidence_spans and usage_context for each term
+- **Skip if classification = OFF_TOPIC**
 
 ## OUTPUT REQUIREMENTS
 
 Return JSON matching ClassificationResult schema with:
-- label: "standard"|"latent"|"off_topic"
-- classification_confidence: 0.0-1.0
-- rubric_assessment: Level 0/50/100 met, evidence quotes
-- flagged_novel_terms: Each term with importance_score, priority, evidence_spans
-- latent_signals_summary: Mechanism quotes, critical engagement, etc.
-- three_tier_context: Topics, novel terms, themes counts
-- question_alignment: Include inferred goal and topic from question_text
-- aggregator_recommendation: ROUTE|STORE|BASELINE with reason
 
-**CRITICAL**: LATENT classification REQUIRES Level 100 rubric met. If Level 100 not met, classify as STANDARD or OFF_TOPIC."""
+**New Structure (v4.0)**:
+- layer_1_rubric_grading: Level achieved (0/50/100), evidence, reasoning
+- layer_2_latent_detection: Signal scores, total_latent_score, classification (only if level=100)
+- layer_3_novel_terms: All novel terms with importance scores (empty for OFF_TOPIC)
+- classification_reasoning: Summary of all three layers
+
+**Legacy Fields (backward compatibility)**:
+- rubric_assessment: Maps to layer_1_rubric_grading
+- latent_signals_summary: Maps to layer_2_latent_detection.signal_evidence
+- flagged_novel_terms: Maps to layer_3_novel_terms
+
+**CRITICAL RULES**:
+1. **Two-layer separation**: Layer 1 (rubric) is INDEPENDENT of Layer 2 (latent)
+2. **No undergrading**: Level 100 with low latent score → STANDARD (not Level 50)
+3. **LATENT requires BOTH**: Level 100 (Layer 1) AND latent_score >= 0.60 (Layer 2)
+4. **Layer 2 starts from 0.0**: No base score, pure latent signal scoring
+5. **OFF_TOPIC skips Layer 3**: Novel term flagging only for STANDARD/LATENT
+6. **Flag ALL novel terms**: Even STANDARD answers may have valuable terms
+"""
         
         # Get temperature from config
         config = provider_manager.get_agent_config("classifier")
@@ -321,11 +347,16 @@ Return JSON matching ClassificationResult schema with:
             f"Classification complete: Q{question_id}, "
             f"label={result.data.label}, "
             f"confidence={result.data.classification_confidence:.2f}, "
-            f"rubric_level={result.data.rubric_assessment.get('rubric_level_achieved', 'unknown') if hasattr(result.data, 'rubric_assessment') and result.data.rubric_assessment else 'unknown'}"
+            f"layer_1_level={result.data.layer_1_rubric_grading.get('level_achieved', 'unknown') if hasattr(result.data, 'layer_1_rubric_grading') and result.data.layer_1_rubric_grading else 'unknown'}, "
+            f"layer_2_score={result.data.layer_2_latent_detection.get('total_latent_score', 'N/A') if hasattr(result.data, 'layer_2_latent_detection') and result.data.layer_2_latent_detection else 'N/A'}"
         )
         
-        # Log novel terms flagged
-        if hasattr(result.data, 'flagged_novel_terms') and result.data.flagged_novel_terms:
+        # Log novel terms flagged (Layer 3)
+        if hasattr(result.data, 'layer_3_novel_terms') and result.data.layer_3_novel_terms:
+            high_priority = sum(1 for t in result.data.layer_3_novel_terms if t.get('priority') == 'HIGH')
+            logger.info(f"Layer 3: Flagged {len(result.data.layer_3_novel_terms)} novel terms ({high_priority} HIGH priority)")
+        elif hasattr(result.data, 'flagged_novel_terms') and result.data.flagged_novel_terms:
+            # Fallback to legacy field
             high_priority = sum(1 for t in result.data.flagged_novel_terms if t.get('priority') == 'HIGH')
             logger.info(f"Flagged {len(result.data.flagged_novel_terms)} novel terms ({high_priority} HIGH priority)")
         
@@ -340,10 +371,22 @@ Return JSON matching ClassificationResult schema with:
             classification_confidence=0.0,
             evidence_spans=[],
             reasoning=f"Classification failed: {str(e)}",
-            rubric_alignment={
-                "matches_level_100": False,
-                "matches_level_50": False,
-                "matches_level_0": False,
+            layer_1_rubric_grading={
+                "level_achieved": 0,
+                "rubric_evidence": [],
+                "latent_eligible": False,
+                "grading_reasoning": "Classification error"
+            },
+            layer_2_latent_detection=None,
+            layer_3_novel_terms=[],
+            classification_reasoning={
+                "layer_1_summary": "Classification failed",
+                "layer_2_summary": "Skipped due to error",
+                "layer_3_summary": "Skipped due to error",
+                "final_decision": f"Classification error: {str(e)}"
+            },
+            rubric_assessment={
+                "rubric_level_achieved": "0",
                 "rubric_reasoning": "Classification error"
             },
             extractor_context={

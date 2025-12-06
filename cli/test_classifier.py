@@ -281,18 +281,34 @@ class ClassifierTester:
                 'reasoning': classification.reasoning,
                 'evidence_spans': classification.evidence_spans,
                 
-                # NEW: Rubric assessment (Level 0/50/100)
+                # NEW: Rubric assessment (Level 0/50/100) - Legacy field
                 'rubric_level_achieved': classification.rubric_assessment.get('rubric_level_achieved', 'unknown') if hasattr(classification, 'rubric_assessment') and classification.rubric_assessment else 'unknown',
-                'rubric_level_100': classification.rubric_assessment.get('level_100_met', False) if hasattr(classification, 'rubric_assessment') and classification.rubric_assessment else False,
-                'rubric_level_50': classification.rubric_assessment.get('level_50_met', False) if hasattr(classification, 'rubric_assessment') and classification.rubric_assessment else False,
-                'rubric_level_0': classification.rubric_assessment.get('level_0_met', False) if hasattr(classification, 'rubric_assessment') and classification.rubric_assessment else False,
                 
-                # NEW: Flagged novel terms with importance scores
+                # NEW v4.0: Layer 1 - Rubric Grading
+                'layer_1_level_achieved': classification.layer_1_rubric_grading.get('level_achieved', None) if hasattr(classification, 'layer_1_rubric_grading') and classification.layer_1_rubric_grading else None,
+                'layer_1_latent_eligible': classification.layer_1_rubric_grading.get('latent_eligible', False) if hasattr(classification, 'layer_1_rubric_grading') and classification.layer_1_rubric_grading else False,
+                
+                # NEW v4.0: Layer 2 - Latent Detection (only if Level 100)
+                'layer_2_total_latent_score': classification.layer_2_latent_detection.get('total_latent_score', None) if hasattr(classification, 'layer_2_latent_detection') and classification.layer_2_latent_detection else None,
+                'layer_2_mechanism_score': classification.layer_2_latent_detection.get('signals_breakdown', {}).get('mechanism_score', None) if hasattr(classification, 'layer_2_latent_detection') and classification.layer_2_latent_detection else None,
+                'layer_2_novel_terms_score': classification.layer_2_latent_detection.get('signals_breakdown', {}).get('novel_terms_score', None) if hasattr(classification, 'layer_2_latent_detection') and classification.layer_2_latent_detection else None,
+                'layer_2_critical_score': classification.layer_2_latent_detection.get('signals_breakdown', {}).get('critical_engagement_score', None) if hasattr(classification, 'layer_2_latent_detection') and classification.layer_2_latent_detection else None,
+                'layer_2_evidence_score': classification.layer_2_latent_detection.get('signals_breakdown', {}).get('evidence_score', None) if hasattr(classification, 'layer_2_latent_detection') and classification.layer_2_latent_detection else None,
+                'layer_2_cross_domain_score': classification.layer_2_latent_detection.get('signals_breakdown', {}).get('cross_domain_score', None) if hasattr(classification, 'layer_2_latent_detection') and classification.layer_2_latent_detection else None,
+                'layer_2_classification': classification.layer_2_latent_detection.get('classification', None) if hasattr(classification, 'layer_2_latent_detection') and classification.layer_2_latent_detection else None,
+                'layer_2_latent_confidence': classification.layer_2_latent_detection.get('latent_confidence', None) if hasattr(classification, 'layer_2_latent_detection') and classification.layer_2_latent_detection else None,
+                
+                # NEW: Flagged novel terms with importance scores - Legacy field
                 'flagged_novel_terms_count': len(classification.flagged_novel_terms) if hasattr(classification, 'flagged_novel_terms') and classification.flagged_novel_terms else 0,
                 'high_priority_terms': [t.get('term', '') for t in classification.flagged_novel_terms if t.get('priority') == 'HIGH'] if hasattr(classification, 'flagged_novel_terms') and classification.flagged_novel_terms else [],
                 'medium_priority_terms': [t.get('term', '') for t in classification.flagged_novel_terms if t.get('priority') == 'MEDIUM'] if hasattr(classification, 'flagged_novel_terms') and classification.flagged_novel_terms else [],
                 
-                # NEW: Latent signals summary
+                # NEW v4.0: Layer 3 - Novel Terms
+                'layer_3_novel_terms_count': len(classification.layer_3_novel_terms) if hasattr(classification, 'layer_3_novel_terms') and classification.layer_3_novel_terms else 0,
+                'layer_3_high_priority_count': sum(1 for t in classification.layer_3_novel_terms if t.get('priority') == 'HIGH') if hasattr(classification, 'layer_3_novel_terms') and classification.layer_3_novel_terms else 0,
+                'layer_3_medium_priority_count': sum(1 for t in classification.layer_3_novel_terms if t.get('priority') == 'MEDIUM') if hasattr(classification, 'layer_3_novel_terms') and classification.layer_3_novel_terms else 0,
+                
+                # NEW: Latent signals summary - Legacy field
                 'latent_mechanism_explanations': classification.latent_signals_summary.get('mechanism_explanations', []) if hasattr(classification, 'latent_signals_summary') and classification.latent_signals_summary else [],
                 'latent_novel_terms_in_mechanisms': classification.latent_signals_summary.get('novel_terms_in_mechanisms', []) if hasattr(classification, 'latent_signals_summary') and classification.latent_signals_summary else [],
                 'latent_critical_engagement': bool(classification.latent_signals_summary.get('critical_engagement')) if hasattr(classification, 'latent_signals_summary') and classification.latent_signals_summary else False,
@@ -330,9 +346,6 @@ class ClassifierTester:
                 'reasoning': '',
                 'evidence_spans': [],
                 'rubric_level_achieved': 'unknown',
-                'rubric_level_100': False,
-                'rubric_level_50': False,
-                'rubric_level_0': False,
                 'flagged_novel_terms_count': 0,
                 'high_priority_terms': [],
                 'medium_priority_terms': [],
@@ -498,11 +511,12 @@ class ClassifierTester:
         results_table.add_column("Status", style="magenta", width=8)
         results_table.add_column("Label", style="yellow", width=10)
         results_table.add_column("Conf", style="green", width=5)
-        results_table.add_column("Rubric", style="blue", width=6)
+        results_table.add_column("L1\nLevel", style="blue", width=6)
+        results_table.add_column("L2\nScore", style="yellow", width=6)
         results_table.add_column("Topics", style="bright_magenta", width=7)
         results_table.add_column("Keywords", style="blue", width=8)
         results_table.add_column("Novel\nTerms", style="red", width=8)
-        results_table.add_column("Flagged\n(H/M)", style="yellow", width=8)
+        results_table.add_column("L3\n(H/M)", style="yellow", width=8)
         results_table.add_column("Agg", style="magenta", width=8)
         
         for result in self.results:
@@ -519,6 +533,24 @@ class ClassifierTester:
                 # Latent signals indicator
                 high_priority = len(result.get('high_priority_terms', []))
                 medium_priority = len(result.get('medium_priority_terms', []))
+                
+                # Layer structure info (v4.0)
+                layer_1_level = result.get('layer_1_level_achieved')
+                if layer_1_level is not None:
+                    layer_1_text = str(layer_1_level)
+                else:
+                    # Fallback to legacy field
+                    layer_1_text = result.get('rubric_level_achieved', 'unknown')
+                
+                layer_2_score = result.get('layer_2_total_latent_score')
+                if layer_2_score is not None:
+                    layer_2_text = f"{layer_2_score:.2f}"
+                else:
+                    layer_2_text = "N/A"
+                
+                # Layer 3 counts (v4.0)
+                layer_3_high = result.get('layer_3_high_priority_count', high_priority)
+                layer_3_medium = result.get('layer_3_medium_priority_count', medium_priority)
                 
                 # Aggregator recommendation
                 agg_rec = result.get('aggregator_recommendation')
@@ -537,11 +569,12 @@ class ClassifierTester:
                     result['status'].upper(),
                     label_text,
                     f"{result['classification_confidence']:.2f}",
-                    result.get('rubric_level_achieved', 'unknown'),
+                    layer_1_text,
+                    layer_2_text,
                     str(len(result['topic'])),
                     str(len(result['matched_keywords'])),
                     str(len(result['novel_terms'])),
-                    f"{high_priority}/{medium_priority}",
+                    f"{layer_3_high}/{layer_3_medium}",
                     Text(agg_text, style=agg_style)
                 )
             else:
@@ -571,11 +604,16 @@ class ClassifierTester:
             
             console.print(f"\nHigh-Confidence LATENT (≥0.75): {len(high_conf_latent)}")
             for r in high_conf_latent[:5]:  # Show top 5
+                layer_2_score = r.get('layer_2_total_latent_score')
+                layer_2_text = f"L2={layer_2_score:.2f}" if layer_2_score is not None else ""
+                
                 console.print(
                     f"  • Answer {r['answer_id']}: "
                     f"confidence={r['classification_confidence']:.2f}, "
-                    f"rubric={r.get('rubric_level_achieved', 'unknown')}, "
-                    f"flagged_terms={len(r.get('high_priority_terms', []))}H/{len(r.get('medium_priority_terms', []))}M"
+                    f"L1={r.get('layer_1_level_achieved', r.get('rubric_level_achieved', 'unknown'))}, "
+                    f"{layer_2_text}, "
+                    f"L3_terms={r.get('layer_3_high_priority_count', len(r.get('high_priority_terms', [])))}H/"
+                    f"{r.get('layer_3_medium_priority_count', len(r.get('medium_priority_terms', [])))}M"
                 )
             
             console.print(f"\nEmerging LATENT Insights (→ Aggregator): {len(route_latent)}")
@@ -644,18 +682,34 @@ class ClassifierTester:
                     'evidence_spans_count',
                     'evidence_spans',
                     
-                    # Rubric assessment (NEW)
+                    # Rubric assessment (Legacy)
                     'rubric_level_achieved',
-                    'rubric_level_100',
-                    'rubric_level_50',
-                    'rubric_level_0',
                     
-                    # Novel term flagging (NEW)
+                    # Layer 1: Rubric Grading (v4.0)
+                    'layer_1_level_achieved',
+                    'layer_1_latent_eligible',
+                    
+                    # Layer 2: Latent Detection (v4.0, only if Level 100)
+                    'layer_2_total_latent_score',
+                    'layer_2_mechanism_score',
+                    'layer_2_novel_terms_score',
+                    'layer_2_critical_score',
+                    'layer_2_evidence_score',
+                    'layer_2_cross_domain_score',
+                    'layer_2_classification',
+                    'layer_2_latent_confidence',
+                    
+                    # Layer 3: Novel Term Flagging (v4.0)
+                    'layer_3_novel_terms_count',
+                    'layer_3_high_priority_count',
+                    'layer_3_medium_priority_count',
+                    
+                    # Novel term flagging (Legacy)
                     'flagged_novel_terms_count',
                     'high_priority_terms',
                     'medium_priority_terms',
                     
-                    # Latent signals (NEW)
+                    # Latent signals (Legacy)
                     'latent_mechanism_explanations',
                     'latent_novel_terms_in_mechanisms',
                     'latent_critical_engagement',
@@ -697,18 +751,34 @@ class ClassifierTester:
                         'evidence_spans_count': len(result['evidence_spans']),
                         'evidence_spans': '|'.join(result['evidence_spans']),
                         
-                        # Rubric assessment (NEW)
+                        # Rubric assessment (Legacy)
                         'rubric_level_achieved': result['rubric_level_achieved'],
-                        'rubric_level_100': result['rubric_level_100'],
-                        'rubric_level_50': result['rubric_level_50'],
-                        'rubric_level_0': result['rubric_level_0'],
                         
-                        # Novel term flagging (NEW)
+                        # Layer 1: Rubric Grading (v4.0)
+                        'layer_1_level_achieved': result.get('layer_1_level_achieved', ''),
+                        'layer_1_latent_eligible': result.get('layer_1_latent_eligible', ''),
+                        
+                        # Layer 2: Latent Detection (v4.0)
+                        'layer_2_total_latent_score': result.get('layer_2_total_latent_score', ''),
+                        'layer_2_mechanism_score': result.get('layer_2_mechanism_score', ''),
+                        'layer_2_novel_terms_score': result.get('layer_2_novel_terms_score', ''),
+                        'layer_2_critical_score': result.get('layer_2_critical_score', ''),
+                        'layer_2_evidence_score': result.get('layer_2_evidence_score', ''),
+                        'layer_2_cross_domain_score': result.get('layer_2_cross_domain_score', ''),
+                        'layer_2_classification': result.get('layer_2_classification', ''),
+                        'layer_2_latent_confidence': result.get('layer_2_latent_confidence', ''),
+                        
+                        # Layer 3: Novel Term Flagging (v4.0)
+                        'layer_3_novel_terms_count': result.get('layer_3_novel_terms_count', 0),
+                        'layer_3_high_priority_count': result.get('layer_3_high_priority_count', 0),
+                        'layer_3_medium_priority_count': result.get('layer_3_medium_priority_count', 0),
+                        
+                        # Novel term flagging (Legacy)
                         'flagged_novel_terms_count': result['flagged_novel_terms_count'],
                         'high_priority_terms': '|'.join(result['high_priority_terms']),
                         'medium_priority_terms': '|'.join(result['medium_priority_terms']),
                         
-                        # Latent signals (NEW)
+                        # Latent signals (Legacy)
                         'latent_mechanism_explanations': '|'.join(result['latent_mechanism_explanations']),
                         'latent_novel_terms_in_mechanisms': '|'.join(result['latent_novel_terms_in_mechanisms']),
                         'latent_critical_engagement': result['latent_critical_engagement'],

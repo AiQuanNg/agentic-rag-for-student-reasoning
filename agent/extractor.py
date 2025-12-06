@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pydantic_ai import Agent, RunContext
 
 from agent.models.extraction import ExtractionResult
-from agent.prompts.BackUp.extractor_v3 import EXTRACTOR_SYSTEM_PROMPT, EXTRACTOR_FULL_PROMPT
+from agent.prompts.extractor import EXTRACTOR_SYSTEM_PROMPT
 from agent.tools.codebook import CodebookTools
 from agent.config.providers import provider_manager
 

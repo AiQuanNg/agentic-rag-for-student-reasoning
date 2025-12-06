@@ -1,3 +1,0 @@
-answer_id,question_id,status,extraction_confidence,topic,matched_keywords_count,detected_themes_count,novel_terms_count,evidence_spans_count,matched_keywords,detected_themes,novel_terms,evidence_spans,error
-3903,1,success,0.0,,0,0,0,0,,,,,
-3904,1,success,0.0,,0,0,0,0,,,,,
