@@ -1,0 +1,2 @@
+timestamp,total_answers_processed,total_terms_processed,total_clusters,add_to_kb_count,review_count,monitor_count,unique_students,high_priority_terms,medium_priority_terms,processing_time_seconds,model_used
+2025-12-08T17:00:35.615259,17,82,2,0,0,2,3,68,14,52.419165,deepseek/deepseek-v3.2

@@ -24,7 +24,7 @@ load_dotenv()
 openrouter_key_set = False
 openai_key_set = False
 
-for agent in ["EXTRACTOR", "CLASSIFIER", "AGGREGATOR"]:
+for agent in ["EXTRACTOR", "CLASSIFIER", "AGGREGATOR", "AGGREGATOR_STAGE1"]:
     provider = os.getenv(f"{agent}_PROVIDER", "openrouter").lower()
     api_key = os.getenv(f"{agent}_API_KEY")
     
@@ -72,7 +72,8 @@ class ProviderManager:
     DEFAULT_TEMPERATURES = {
         "extractor": 0.1,    # Low for consistent extraction
         "classifier": 0.2,   # Slightly higher for reasoning
-        "aggregator": 0.1    # Low for pattern matching
+        "aggregator": 0.1,   # Low for pattern matching
+        "aggregator_stage1": 0.1  # Low for term equivalence validation
     }
     
     # Base URLs for providers
